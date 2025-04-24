@@ -1,3 +1,6 @@
+$linuxUser = "azur1"
+$linuxPassword = "YourSecurePassword123!" | ConvertTo-SecureString -AsPlainText -Force
+$credential = New-Object System.Management.Automation.PSCredential ($linuxUser, $linuxPassword)
 $location = "uksouth"
 $resourceGroupName = "mate-azure-task-10"
 $networkSecurityGroupName = "defaultnsg"
@@ -6,41 +9,61 @@ $subnetName = "default"
 $vnetAddressPrefix = "10.0.0.0/16"
 $subnetAddressPrefix = "10.0.0.0/24"
 $sshKeyName = "linuxboxsshkey"
-$sshKeyPublicKey = Get-Content "~/.ssh/id_rsa.pub" 
-$vmName = "matebox"
-$vmImage = "Ubuntu2204"
 $vmSize = "Standard_B1s"
+$vmImage = "Ubuntu2204"
+$vm1Name = "matevm1"
+$vm2Name = "matebvm2"
+$zone1 = "1"
+$zone2 = "2"
 
-Write-Host "Creating a resource group $resourceGroupName ..."
+if (-not (Test-Path "$HOME\.ssh\$linuxUser.pub")) {
+    Write-Host "SSH-ключ не найден. Генерируем новый..." -ForegroundColor Cyan
+    ssh-keygen -t rsa -b 4096 -f "$HOME\.ssh\$linuxUser" -N "" | Out-Null
+}
+
+$sshKeyPublicKey = (Get-Content "$HOME\.ssh\$linuxUser.pub" -Raw).Trim()
+
+Write-Host "Creating a resource group $resourceGroupName ..." -ForegroundColor Cyan
 New-AzResourceGroup -Name $resourceGroupName -Location $location
 
-Write-Host "Creating a network security group $networkSecurityGroupName ..."
-$nsgRuleSSH = New-AzNetworkSecurityRuleConfig -Name SSH  -Protocol Tcp -Direction Inbound -Priority 1001 -SourceAddressPrefix * -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 22 -Access Allow;
-$nsgRuleHTTP = New-AzNetworkSecurityRuleConfig -Name HTTP  -Protocol Tcp -Direction Inbound -Priority 1002 -SourceAddressPrefix * -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 8080 -Access Allow;
-New-AzNetworkSecurityGroup -Name $networkSecurityGroupName -ResourceGroupName $resourceGroupName -Location $location -SecurityRules $nsgRuleSSH, $nsgRuleHTTP
+Write-Host "Creating a network security group $networkSecurityGroupName ..." -ForegroundColor Cyan
+$nsgRuleSSH = New-AzNetworkSecurityRuleConfig -Name SSH -Protocol Tcp -Direction Inbound -Priority 1001 -SourceAddressPrefix * -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 22 -Access Allow
+$nsgRuleHTTP = New-AzNetworkSecurityRuleConfig -Name HTTP -Protocol Tcp -Direction Inbound -Priority 1002 -SourceAddressPrefix * -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 8080 -Access Allow
+$nsg = New-AzNetworkSecurityGroup -Name $networkSecurityGroupName -ResourceGroupName $resourceGroupName -Location $location -SecurityRules $nsgRuleSSH,$nsgRuleHTTP
 
-$subnet = New-AzVirtualNetworkSubnetConfig -Name $subnetName -AddressPrefix $subnetAddressPrefix
-New-AzVirtualNetwork -Name $virtualNetworkName -ResourceGroupName $resourceGroupName -Location $location -AddressPrefix $vnetAddressPrefix -Subnet $subnet
+# 4. Создание виртуальной сети и подсети
+Write-Host "Creating Virtual Network..." -ForegroundColor Cyan
+$subnetConfig = New-AzVirtualNetworkSubnetConfig -Name $subnetName -AddressPrefix $subnetAddressPrefix -NetworkSecurityGroup $nsg
+New-AzVirtualNetwork -Name $virtualNetworkName -ResourceGroupName $resourceGroupName `
+    -Location $location -AddressPrefix $vnetAddressPrefix -Subnet $subnetConfig | Out-Null
 
-New-AzSshKey -Name $sshKeyName -ResourceGroupName $resourceGroupName -PublicKey $sshKeyPublicKey
-
-# Take a note that in this task VMs are deployed without public IPs and you won't be able
-# to connect to them - that's on purpose! The "free" Public IP resource (Basic SKU,
-# dynamic IP allocation) can't be deployed to the availability zone, and therefore can't 
-# be attached to the VM. Don't trust me - test it yourself! 
-# If you want to get a VM with public IP deployed to the availability zone - you need to use 
-# Standard public IP SKU (which you will need to pay for, it is not included in the free account)
-# and set same zone you would set on the VM, but this is not required in this task. 
-# New-AzPublicIpAddress -Name $publicIpAddressName -ResourceGroupName $resourceGroupName -Location $location -Sku Basic -AllocationMethod Dynamic -DomainNameLabel "random32987"
+# 5. Создание SSH ключа в Azure
+Write-Host "Creating SSH Key in Azure..." -ForegroundColor Cyan
+New-AzSshKey -Name $sshKeyName -ResourceGroupName $resourceGroupName -PublicKey $sshKeyPublicKey | Out-Null
 
 New-AzVm `
 -ResourceGroupName $resourceGroupName `
--Name $vmName `
+-Name $vm1Name `
 -Location $location `
--image $vmImage `
--size $vmSize `
+-Image $vmImage `
+-Size $vmSize `
+-Credential $credential `
 -SubnetName $subnetName `
 -VirtualNetworkName $virtualNetworkName `
 -SecurityGroupName $networkSecurityGroupName `
--SshKeyName $sshKeyName 
-# -PublicIpAddressName $publicIpAddressName
+-SshKeyName $sshKeyName `
+-Zone $zone1
+
+
+New-AzVm `
+-ResourceGroupName $resourceGroupName `
+-Name $vm2Name `
+-Location $location `
+-Image $vmImage `
+-Size $vmSize `
+-Credential $credential `
+-SubnetName $subnetName `
+-VirtualNetworkName $virtualNetworkName `
+-SecurityGroupName $networkSecurityGroupName `
+-SshKeyName $sshKeyName `
+-Zone $zone2
